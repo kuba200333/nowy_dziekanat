@@ -1,9 +1,8 @@
 <?php
-// Plik: index.php (Wersja z Ankietyzacją i pełną kontrolą dostępu)
+// Plik: index.php (Wersja z poprawionym linkiem do obecności)
 session_start();
 require_once 'db_config.php';
 
-// Sprawdzenie, czy użytkownik jest zalogowany
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
     header("Location: login.php");
     exit();
@@ -15,9 +14,8 @@ $is_admin = $_SESSION['is_admin'] ?? false;
 
 $page = $_GET['page'] ?? 'dashboard';
 
-// Domyślna strona dla ról po zalogowaniu
 if ($user_role == 'student' && $page == 'dashboard') $page = 'karta_studenta';
-if ($user_role == 'pracownik' && !$is_admin && $page == 'dashboard') $page = 'plan_wyszukiwarka';
+if ($user_role == 'pracownik' && !$is_admin && $page == 'dashboard') $page = 'obecnosc_wybor_zajec';
 
 $currentPage = $page;
 
@@ -25,23 +23,18 @@ $currentPage = $page;
 $dozwolone_strony = [];
 if ($user_role == 'pracownik') {
     if (!$is_admin) {
-        // Zwykły nauczyciel
         $dozwolone_strony = [
             'dashboard', 'oceny_czastkowe_wybor', 'oceny_czastkowe_zarzadzaj',
-            'oceny_wybor_krok1', 'oceny_wybor_krok2', 'oceny_wprowadz_form', 'plan_wyszukiwarka'
+            'oceny_wybor_krok1', 'oceny_wybor_krok2', 'oceny_wprowadz_form', 'plan_wyszukiwarka',
+            'obecnosc_wybor_zajec', 'obecnosc_form' // POPRAWIONA LISTA
         ];
     }
 } elseif ($user_role == 'student') {
-    // Student
     $dozwolone_strony = [
-        'karta_studenta', 
-        'plan_wyszukiwarka',
-        'wybory_student_lista',
-        'wybory_student_glosuj',
-        'stypendia_student_lista',
-        'stypendia_student_form',
-        'ankiety_student_lista', // Nowa strona dla studenta
-        'ankiety_student_form'   // Nowa strona dla studenta
+        'karta_studenta', 'plan_wyszukiwarka', 'wybory_student_lista',
+        'wybory_student_glosuj', 'stypendia_student_lista', 'stypendia_student_form',
+        'ankiety_student_lista', 'ankiety_student_form',
+        'obecnosc_student_podglad'
     ];
 }
 
@@ -65,8 +58,13 @@ $ma_dostep = $is_admin ? true : in_array($page, $dozwolone_strony);
                         <?php if ($is_admin): // ### MENU DLA ADMINISTRATORA ### ?>
                             <li><a href="index.php?page=dashboard" class="<?= ($currentPage == 'dashboard') ? 'active' : '' ?>">Pulpit</a></li>
                             <hr>
+                            <li><strong>Plan Zajęć</strong></li>
+                            <li><a href="index.php?page=plan_wyszukiwarka" class="<?= str_starts_with($currentPage, 'plan_wyszukiwarka') ? 'active' : '' ?>">Wyszukiwarka Planu</a></li>
+                            <li><a href="index.php?page=plan_dodaj_szablon" class="<?= str_starts_with($currentPage, 'plan_dodaj_szablon') ? 'active' : '' ?>">Zarządzaj Szablonami</a></li>
+                            <li><a href="index.php?page=plan_modyfikuj_termin" class="<?= str_starts_with($currentPage, 'plan_modyfikuj_termin') ? 'active' : '' ?>">Modyfikuj Terminy</a></li>
+                             <hr>
                             <li><strong>Zarządzanie Dydaktyką</strong></li>
-                            <li><a href="index.php?page=przedmioty_lista" class="<?= str_starts_with($currentPage, 'przedmioty') ? 'active' : '' ?>">Przedmioty</a></li>
+                             <li><a href="index.php?page=przedmioty_lista" class="<?= str_starts_with($currentPage, 'przedmioty') ? 'active' : '' ?>">Przedmioty</a></li>
                             <li><a href="index.php?page=konfiguracje_lista" class="<?= str_starts_with($currentPage, 'konfiguracje') ? 'active' : '' ?>">Konfiguracje</a></li>
                             <li><a href="index.php?page=grupy_lista" class="<?= str_starts_with($currentPage, 'grupy') ? 'active' : '' ?>">Grupy Zajęciowe</a></li>
                             <li><a href="index.php?page=zajecia_lista" class="<?= str_starts_with($currentPage, 'zajecia') ? 'active' : '' ?>">Zajęcia</a></li>
@@ -74,25 +72,16 @@ $ma_dostep = $is_admin ? true : in_array($page, $dozwolone_strony);
                             <hr>
                             <li><strong>Wybory i Ankiety</strong></li>
                             <li><a href="index.php?page=wybory_admin_form" class="<?= str_starts_with($currentPage, 'wybory_admin_form') ? 'active' : '' ?>">Utwórz Wybór Przedmiotów</a></li>
+                            <li><a href="index.php?page=stypendia_admin_lista" class="<?= str_starts_with($currentPage, 'stypendia_admin') ? 'active' : '' ?>">Zarządzaj Stypendiami</a></li>
                             <li><a href="index.php?page=ankiety_admin_form" class="<?= str_starts_with($currentPage, 'ankiety_admin_form') ? 'active' : '' ?>">Utwórz Ankietę</a></li>
                             <li><a href="index.php?page=ankiety_admin_wyniki" class="<?= str_starts_with($currentPage, 'ankiety_admin_wyniki') ? 'active' : '' ?>">Wyniki Ankiet</a></li>
-                            <hr>
-                            <li><strong>Plan Zajęć</strong></li>
-                            <li><a href="index.php?page=plan_wyszukiwarka" class="<?= $currentPage == 'plan_wyszukiwarka' ? 'active' : '' ?>">Wyszukiwarka Planu</a></li>
-                            <li><a href="index.php?page=plan_dodaj_szablon" class="<?= $currentPage == 'plan_dodaj_szablon' ? 'active' : '' ?>">Zarządzaj Szablonami</a></li>
-                            <li><a href="index.php?page=plan_modyfikuj_termin" class="<?= $currentPage == 'plan_modyfikuj_termin' ? 'active' : '' ?>">Modyfikuj Terminy</a></li>
                             <hr>
                             <li><strong>Ocenianie</strong></li>
                             <li><a href="index.php?page=oceny_czastkowe_wybor" class="<?= str_starts_with($currentPage, 'oceny_czastkowe') ? 'active' : '' ?>">Oceny Cząstkowe</a></li>
                             <li><a href="index.php?page=oceny_wybor_krok1" class="<?= str_starts_with($currentPage, 'oceny_wybor') ? 'active' : '' ?>">Oceny Końcowe</a></li>
-                            <hr>
-                            <li><strong>Zarządzanie Użytkownikami</strong></li>
-                            <li><a href="index.php?page=studenci_lista" class="<?= str_starts_with($currentPage, 'studenci') ? 'active' : '' ?>">Studenci</a></li>
-                            <li><a href="index.php?page=prowadzacy_lista" class="<?= str_starts_with($currentPage, 'prowadzacy') ? 'active' : '' ?>">Prowadzący</a></li>
-                            <li><a href="index.php?page=karta_studenta_wybor" class="<?= str_starts_with($currentPage, 'karta_studenta_wybor') ? 'active' : '' ?>">Karta Ocen Studenta</a></li>
-                        
                         <?php else: // ### MENU DLA ZWYKŁEGO NAUCZYCIELA ### ?>
                             <li><a href="index.php?page=plan_wyszukiwarka" class="<?= $currentPage == 'plan_wyszukiwarka' ? 'active' : '' ?>">Mój Plan Zajęć</a></li>
+                             <li><a href="index.php?page=obecnosc_wybor_zajec" class="<?= str_starts_with($currentPage, 'obecnosc') ? 'active' : '' ?>">Sprawdzanie Obecności</a></li>
                             <hr>
                             <li><strong>Ocenianie</strong></li>
                             <li><a href="index.php?page=oceny_czastkowe_wybor" class="<?= str_starts_with($currentPage, 'oceny_czastkowe') ? 'active' : '' ?>">Wystaw Oceny Cząstkowe</a></li>
@@ -102,6 +91,7 @@ $ma_dostep = $is_admin ? true : in_array($page, $dozwolone_strony);
                     <?php elseif ($user_role == 'student'): // ### MENU DLA STUDENTA ### ?>
                         <li><a href="index.php?page=karta_studenta" class="<?= $currentPage == 'karta_studenta' ? 'active' : '' ?>">Moje Oceny</a></li>
                         <li><a href="index.php?page=plan_wyszukiwarka" class="<?= $currentPage == 'plan_wyszukiwarka' ? 'active' : '' ?>">Mój Plan Zajęć</a></li>
+                        <li><a href="index.php?page=obecnosc_student_podglad" class="<?= str_starts_with($currentPage, 'obecnosc_') ? 'active' : '' ?>">Moja Obecność</a></li>
                         <li><a href="index.php?page=wybory_student_lista" class="<?= str_starts_with($currentPage, 'wybory_student') ? 'active' : '' ?>">Wybór Przedmiotów</a></li>
                         <li><a href="index.php?page=stypendia_student_lista" class="<?= str_starts_with($currentPage, 'stypendia_student') ? 'active' : '' ?>">Wnioskuj o stypendium</a></li>
                         <li><a href="index.php?page=ankiety_student_lista" class="<?= str_starts_with($currentPage, 'ankiety_student') ? 'active' : '' ?>">Ankietyzacja</a></li>

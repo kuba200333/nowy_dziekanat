@@ -161,7 +161,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 }
                 redirect_with_message('zajecia_lista', 'success', 'Utworzono nowe zajęcia i automatycznie zapisano na nie studentów z grupy.');
                 break;
-                
+            case 'zapisz_obecnosc':
+                $termin_id = (int)$_POST['termin_id'];
+                $obecnosc_post = $_POST['obecnosc'] ?? [];
+
+                $sql = "INSERT INTO Obecnosc (numer_albumu, termin_id, status_obecnosci) VALUES (?, ?, ?)
+                        ON DUPLICATE KEY UPDATE status_obecnosci = VALUES(status_obecnosci)";
+                $stmt = $conn->prepare($sql);
+
+                foreach ($obecnosc_post as $numer_albumu => $status) {
+                    if (!empty($status)) {
+                        $stmt->bind_param("iis", $numer_albumu, $termin_id, $status);
+                        $stmt->execute();
+                    }
+                }
+                redirect_with_message('obecnosc_plan_nauczyciela', 'success', 'Obecność została zapisana.');
+                break;
+
             case 'zarzadzaj_zapisami_masowymi':
                 $zajecia_id = (int)$_POST['zajecia_id'];
                 $rok_rozpoczecia = (int)$_POST['rok_rozpoczecia'];
