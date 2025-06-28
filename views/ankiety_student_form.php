@@ -1,5 +1,5 @@
 <?php
-// Plik: views/ankiety_student_form.php
+// Plik: views/ankiety_student_form.php (Wersja z ocenami połówkowymi)
 $okres_id = (int)$_GET['okres_id'];
 $zajecia_id = (int)$_GET['zajecia_id'];
 // Pobierz info o ocenianych zajęciach
@@ -8,7 +8,11 @@ $stmt = $conn->prepare($info_sql);
 $stmt->bind_param("i", $zajecia_id);
 $stmt->execute();
 $info = $stmt->get_result()->fetch_assoc();
+
+// Definicja dozwolonych ocen w ankiecie
+$dozwolone_oceny = [2.0, 3.0, 3.5, 4.0, 4.5, 5.0];
 ?>
+
 <h1>Ocena Prowadzącego</h1>
 <h3>Przedmiot: <?= htmlspecialchars($info['nazwa_przedmiotu']) ?></h3>
 <h4>Prowadzący: <?= htmlspecialchars($info['prowadzacy']) ?></h4>
@@ -19,20 +23,32 @@ $info = $stmt->get_result()->fetch_assoc();
 
     <div class="form-group">
         <label>Przygotowanie do zajęć (2-źle, 5-świetnie):</label>
-        <div>
-            <?php for($i=2; $i<=5; $i++): ?>
-            <input type="radio" name="ocena_przygotowanie" value="<?= $i ?>" id="p<?= $i ?>" required><label for="p<?= $i ?>"><?= $i ?></label>
-            <?php endfor; ?>
+        <div style="display: flex; gap: 15px;">
+            <?php foreach($dozwolone_oceny as $ocena): 
+                $id = 'p' . str_replace('.', '_', $ocena); // Tworzy unikalne ID, np. p3_5
+            ?>
+                <span>
+                    <input type="radio" name="ocena_przygotowanie" value="<?= $ocena ?>" id="<?= $id ?>" required>
+                    <label for="<?= $id ?>"><?= number_format($ocena, 1) ?></label>
+                </span>
+            <?php endforeach; ?>
         </div>
     </div>
+    
     <div class="form-group">
         <label>Sposób oceniania (2-źle, 5-świetnie):</label>
-        <div>
-            <?php for($i=2; $i<=5; $i++): ?>
-            <input type="radio" name="ocena_sposob_oceniania" value="<?= $i ?>" id="o<?= $i ?>" required><label for="o<?= $i ?>"><?= $i ?></label>
-            <?php endfor; ?>
+        <div style="display: flex; gap: 15px;">
+            <?php foreach($dozwolone_oceny as $ocena): 
+                $id = 'o' . str_replace('.', '_', $ocena);
+            ?>
+                <span>
+                    <input type="radio" name="ocena_sposob_oceniania" value="<?= $ocena ?>" id="<?= $id ?>" required>
+                    <label for="<?= $id ?>"><?= number_format($ocena, 1) ?></label>
+                </span>
+            <?php endforeach; ?>
         </div>
     </div>
+    
     <div class="form-group">
         <label for="ocena_opisowa">Ocena opisowa (opcjonalnie):</label>
         <textarea name="ocena_opisowa" id="ocena_opisowa" rows="5"></textarea>

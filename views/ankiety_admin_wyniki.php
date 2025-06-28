@@ -9,7 +9,7 @@ $wyniki_sql = "
         COUNT(ao.odpowiedz_id) as ilosc_odpowiedzi
     FROM AnkietyOdpowiedzi ao
     JOIN Zajecia z ON ao.zajecia_id = z.zajecia_id
-    JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
+    LEFT JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
     GROUP BY pr.prowadzacy_id
     ORDER BY srednia_przygotowanie DESC, srednia_ocenianie DESC
 ";
