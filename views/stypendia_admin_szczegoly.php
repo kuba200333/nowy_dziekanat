@@ -27,6 +27,7 @@ if (!$wniosek) {
 
 // Pobierz oceny, które były podstawą obliczenia średniej
 $semestry = explode(',', $wniosek['semestry']);
+
 $oceny_sql = "
     SELECT p.nazwa_przedmiotu, oc.wartosc_obliczona, kp.punkty_ects
     FROM OcenyCalkowiteZPrzedmiotu oc

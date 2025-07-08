@@ -1,13 +1,23 @@
 <?php
-// Plik: views/zajecia_lista.php
-$sql = "SELECT z.zajecia_id, p.nazwa_przedmiotu, z.forma_zajec, g.nazwa_grupy,
-               CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko) AS prowadzacy, z.waga_oceny
-        FROM Zajecia z
-        JOIN KonfiguracjaPrzedmiotu k ON z.konfiguracja_id = k.konfiguracja_id
-        JOIN Przedmioty p ON k.przedmiot_id = p.przedmiot_id
-        JOIN GrupyZajeciowe g ON z.grupa_id = g.grupa_id
-        JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
-        ORDER BY p.nazwa_przedmiotu, z.forma_zajec";
+// Plik: views/zajecia_lista.php (Wersja z poprawionym pobieraniem wagi)
+
+// ZMIANA: Zapytanie SQL zostało zaktualizowane, aby pobierać wagę z nowej tabeli KonfiguracjaKomponentow
+$sql = "
+    SELECT 
+        z.zajecia_id, 
+        p.nazwa_przedmiotu, 
+        z.forma_zajec, 
+        g.nazwa_grupy,
+        CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko) AS prowadzacy, 
+        kk.waga_oceny
+    FROM Zajecia z
+    JOIN KonfiguracjaPrzedmiotu k ON z.konfiguracja_id = k.konfiguracja_id
+    JOIN Przedmioty p ON k.przedmiot_id = p.przedmiot_id
+    JOIN GrupyZajeciowe g ON z.grupa_id = g.grupa_id
+    JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
+    LEFT JOIN KonfiguracjaKomponentow kk ON z.konfiguracja_id = kk.konfiguracja_id AND z.forma_zajec = kk.forma_zajec
+    ORDER BY p.nazwa_przedmiotu, z.forma_zajec
+";
 $result = $conn->query($sql);
 ?>
 <h1>Utworzone Zajęcia</h1>
@@ -30,7 +40,7 @@ $result = $conn->query($sql);
                     <td><?= htmlspecialchars($row['forma_zajec']) ?></td>
                     <td><?= htmlspecialchars($row['nazwa_grupy']) ?></td>
                     <td><?= htmlspecialchars($row['prowadzacy']) ?></td>
-                    <td><?= htmlspecialchars($row['waga_oceny']) ?></td>
+                    <td><?= htmlspecialchars(number_format($row['waga_oceny'] ?? 0, 2)) ?></td>
                 </tr>
             <?php endwhile; ?>
         <?php else: ?>

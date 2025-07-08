@@ -1,5 +1,5 @@
 <?php
-// Plik: views/oceny_wprowadz_form.php (Wersja Ostateczna)
+// Plik: views/oceny_wprowadz_form.php (Wersja z terminami w kolumnach)
 
 if (!isset($_GET['zajecia_id'])) {
     echo "<h1>Błąd</h1><p>Nie wybrano zajęć. <a href='index.php?page=oceny_wybor_krok1'>Wróć do wyboru</a>.</p>";
@@ -44,55 +44,57 @@ foreach ($oceny_result as $ocena) {
     <table>
         <thead>
             <tr>
-                <th>Student</th>
-                <th>Termin</th>
-                <th>Ocena (2, 3, 3.5, 4, 4.5, 5)</th>
-                <th>Zatwierdź Ostatecznie</th>
+                <th rowspan="2">Student</th>
+                <th colspan="2">Termin 1</th>
+                <th colspan="2">Termin 2 (popr. I)</th>
+                <th colspan="2">Termin 3 (popr. II)</th>
+            </tr>
+            <tr>
+                <th>Ocena</th>
+                <th>Zatwierdź</th>
+                <th>Ocena</th>
+                <th>Zatwierdź</th>
+                <th>Ocena</th>
+                <th>Zatwierdź</th>
             </tr>
         </thead>
         <tbody>
             <?php if (count($studenci) > 0): ?>
                 <?php foreach ($studenci as $student): ?>
-                    <?php for ($termin = 1; $termin <= 3; $termin++): ?>
-                        <?php
-                            $ocena_dane = $istniejace_oceny[$student['zapis_id']][$termin] ?? null;
-                            $wartosc = $ocena_dane['wartosc'] ?? '';
-                            $zatwierdzona = $ocena_dane['zatwierdzona'] ?? false;
-                            $disabled = $zatwierdzona ? 'disabled' : '';
-                        ?>
-                        <tr>
-                            <?php if ($termin == 1): // Wyświetlaj nazwisko tylko w pierwszym wierszu ?>
-                                <td rowspan="3" style="vertical-align: middle; border-bottom: 2px solid #333;">
-                                    <?= htmlspecialchars($student['imie'] . ' ' . $student['nazwisko']) ?><br>
-                                    <small>(<?= htmlspecialchars($student['numer_albumu']) ?>)</small>
-                                </td>
-                            <?php endif; ?>
-                            <td>
-                                <strong>Termin <?= $termin ?></strong>
-                                <?php if ($termin == 2) echo " (popr. I)"; if ($termin == 3) echo " (popr. II)"; ?>
-                            </td>
+                    <tr>
+                        <td>
+                            <?= htmlspecialchars($student['imie'] . ' ' . $student['nazwisko']) ?><br>
+                            <small>(<?= htmlspecialchars($student['numer_albumu']) ?>)</small>
+                        </td>
+                        <?php for ($termin = 1; $termin <= 3; $termin++): ?>
+                            <?php
+                                $ocena_dane = $istniejace_oceny[$student['zapis_id']][$termin] ?? null;
+                                $wartosc = $ocena_dane['wartosc'] ?? '';
+                                $zatwierdzona = $ocena_dane['zatwierdzona'] ?? false;
+                                $disabled = $zatwierdzona ? 'disabled' : '';
+                            ?>
                             <td>
                                 <select name="oceny[<?= $student['zapis_id'] ?>][<?= $termin ?>]" <?= $disabled ?>>
-                                    <option value="" <?= ($wartosc == '') ? 'selected' : '' ?>>Brak oceny</option>
-                                    <option value="2.0" <?= ($wartosc == '2.0') ? 'selected' : '' ?>>2.0</option>
-                                    <option value="3.0" <?= ($wartosc == '3.0') ? 'selected' : '' ?>>3.0</option>
-                                    <option value="3.5" <?= ($wartosc == '3.5') ? 'selected' : '' ?>>3.5</option>
-                                    <option value="4.0" <?= ($wartosc == '4.0') ? 'selected' : '' ?>>4.0</option>
-                                    <option value="4.5" <?= ($wartosc == '4.5') ? 'selected' : '' ?>>4.5</option>
-                                    <option value="5.0" <?= ($wartosc == '5.0') ? 'selected' : '' ?>>5.0</option>
+                                    <option value="" <?= ($wartosc == '') ? 'selected' : '' ?>>Brak</option>
+                                    <option value="2.0" <?= ($wartosc == '2.00') ? 'selected' : '' ?>>2.0</option>
+                                    <option value="3.0" <?= ($wartosc == '3.00') ? 'selected' : '' ?>>3.0</option>
+                                    <option value="3.5" <?= ($wartosc == '3.50') ? 'selected' : '' ?>>3.5</option>
+                                    <option value="4.0" <?= ($wartosc == '4.00') ? 'selected' : '' ?>>4.0</option>
+                                    <option value="4.5" <?= ($wartosc == '4.50') ? 'selected' : '' ?>>4.5</option>
+                                    <option value="5.0" <?= ($wartosc == '5.00') ? 'selected' : '' ?>>5.0</option>
                                     <option value="zal" <?= (strtolower($wartosc) == 'zal') ? 'selected' : '' ?>>zal</option>
                                     <option value="nzal" <?= (strtolower($wartosc) == 'nzal') ? 'selected' : '' ?>>nzal</option>
                                 </select>
                             </td>
-                            <td>
+                            <td style="text-align: center;">
                                 <input type="checkbox" name="zatwierdzone[<?= $student['zapis_id'] ?>][<?= $termin ?>]" value="1" <?= $zatwierdzona ? 'checked' : '' ?> <?= $disabled ?>>
-                                <?php if ($zatwierdzona) echo "Zatwierdzona"; ?>
+                                <?php if ($zatwierdzona) echo "✔️"; ?>
                             </td>
-                        </tr>
-                    <?php endfor; ?>
+                        <?php endfor; ?>
+                    </tr>
                 <?php endforeach; ?>
             <?php else: ?>
-                <tr><td colspan="4">Brak studentów zapisanych na te zajęcia.</td></tr>
+                <tr><td colspan="7">Brak studentów zapisanych na te zajęcia.</td></tr>
             <?php endif; ?>
         </tbody>
     </table>

@@ -22,7 +22,7 @@ if (!$is_admin) {
     $zajecia_sql .= " WHERE z.prowadzacy_id = ?";
 }
 
-$zajecia_sql .= " ORDER BY p.nazwa_przedmiotu, r.nazwa_roku, g.semestr, g.nazwa_grupy, z.forma_zajec";
+$zajecia_sql .= " ORDER BY g.semestr, p.nazwa_przedmiotu, r.nazwa_roku, g.nazwa_grupy, z.forma_zajec";
 
 $stmt = $conn->prepare($zajecia_sql);
 if (!$is_admin) {

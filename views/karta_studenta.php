@@ -1,7 +1,7 @@
 <?php
-// Plik: views/karta_studenta.php (Kompletny widok dla zalogowanego studenta)
+// Plik: views/karta_studenta.php (Kompletna i poprawiona wersja)
 
-// Używamy ID studenta zapisanego w sesji - nie można oglądać ocen innych osób
+// Używamy ID studenta zapisanego w sesji
 $numer_albumu = (int)$_SESSION['user_id'];
 
 // Pobierz dane studenta
@@ -20,26 +20,34 @@ $min_semestr = $semestry_info['min_sem'] ?? 1;
 $max_semestr = $semestry_info['max_sem'] ?? 1;
 $biezacy_semestr = isset($_GET['semestr']) ? (int)$_GET['semestr'] : $max_semestr;
 
-
 // --- Główna logika pobierania danych ---
 
-// 1. Pobierz komponenty, na które student był zapisany w danym semestrze
+// 1. Pobierz wszystkie komponenty (zajęcia)
+// ZMIANA: Zapytanie zostało w pełni poprawione, aby pobierało wagę z `KonfiguracjaKomponentow` i używało LEFT JOIN dla prowadzącego
 $komponenty_sql = "
     SELECT 
-        k.konfiguracja_id, p.nazwa_przedmiotu, z.forma_zajec, z.zajecia_id, zs.zapis_id,
-        CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko) as prowadzacy, z.waga_oceny
+        k.konfiguracja_id,
+        p.nazwa_przedmiotu,
+        z.forma_zajec,
+        z.zajecia_id,
+        zs.zapis_id,
+        IFNULL(CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko), '') as prowadzacy,
+        kk.waga_oceny
     FROM ZapisyStudentow zs
     JOIN Zajecia z ON zs.zajecia_id = z.zajecia_id
     JOIN GrupyZajeciowe g ON z.grupa_id = g.grupa_id
     JOIN KonfiguracjaPrzedmiotu k ON z.konfiguracja_id = k.konfiguracja_id
+    LEFT JOIN KonfiguracjaKomponentow kk ON k.konfiguracja_id = kk.konfiguracja_id AND z.forma_zajec = kk.forma_zajec
     JOIN Przedmioty p ON k.przedmiot_id = p.przedmiot_id
-    JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
+    LEFT JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
     WHERE zs.numer_albumu = ? AND g.semestr = ?
-    ORDER BY p.nazwa_przedmiotu, z.forma_zajec";
+    ORDER BY p.nazwa_przedmiotu, z.forma_zajec
+";
 $stmt_komponenty = $conn->prepare($komponenty_sql);
 $stmt_komponenty->bind_param("ii", $numer_albumu, $biezacy_semestr);
 $stmt_komponenty->execute();
 $komponenty_res = $stmt_komponenty->get_result()->fetch_all(MYSQLI_ASSOC);
+
 $przedmioty_w_semestrze = [];
 foreach($komponenty_res as $komponent) {
     $przedmioty_w_semestrze[$komponent['konfiguracja_id']]['nazwa'] = $komponent['nazwa_przedmiotu'];

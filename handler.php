@@ -12,50 +12,86 @@ function redirect_with_message($page, $status, $message = '') {
  * WERSJA FINALNA - Oblicza ocenę tylko z ZATWIERDZONYCH komponentów i poprawnie obsługuje "zal".
  */
 function obliczIZapiszOceneCalkowita(mysqli $conn, int $numer_albumu, int $konfiguracja_id): bool {
+    
+    echo "<h3>--- Start diagnostyki funkcji dla studenta: $numer_albumu, przedmiot (konf. id): $konfiguracja_id ---</h3>";
+
+    // 1. Pobierz wymagane formy
     $formy_sql = "SELECT DISTINCT forma_zajec FROM Zajecia WHERE konfiguracja_id = ?";
     $stmt_formy = $conn->prepare($formy_sql);
     $stmt_formy->bind_param("i", $konfiguracja_id);
     $stmt_formy->execute();
     $wymagane_formy_res = $stmt_formy->get_result()->fetch_all(MYSQLI_ASSOC);
     $wymagane_formy = array_column($wymagane_formy_res, 'forma_zajec');
-    if (empty($wymagane_formy)) return false;
+    if (empty($wymagane_formy)) { echo "<p style='color:red;'>BŁĄD: Przedmiot nie ma zdefiniowanych form.</p>"; return false; }
+    echo "<p>OK: Wymagane formy dla tego przedmiotu: " . implode(', ', $wymagane_formy) . "</p>";
 
+    // 2. Pobierz oceny studenta
     $oceny_studenta_sql = "
         SELECT 
-            z.forma_zajec, z.waga_oceny,
+            z.forma_zajec, kk.waga_oceny,
             (SELECT ok.wartosc_oceny FROM OcenyKoncoweZKomponentu ok WHERE ok.zapis_id = zs.zapis_id ORDER BY ok.termin DESC LIMIT 1) as ostatnia_ocena_str,
             (SELECT ok.czy_zatwierdzona FROM OcenyKoncoweZKomponentu ok WHERE ok.zapis_id = zs.zapis_id ORDER BY ok.termin DESC LIMIT 1) as czy_ostatnia_zatwierdzona
         FROM ZapisyStudentow zs
         JOIN Zajecia z ON zs.zajecia_id = z.zajecia_id
+        LEFT JOIN KonfiguracjaKomponentow kk ON z.konfiguracja_id = kk.konfiguracja_id AND z.forma_zajec = kk.forma_zajec
         WHERE zs.numer_albumu = ? AND z.konfiguracja_id = ?
     ";
     $stmt_oceny = $conn->prepare($oceny_studenta_sql);
     $stmt_oceny->bind_param("ii", $numer_albumu, $konfiguracja_id);
     $stmt_oceny->execute();
     $oceny_studenta = $stmt_oceny->get_result()->fetch_all(MYSQLI_ASSOC);
+    echo "<p>OK: Znaleziono " . count($oceny_studenta) . " komponentów, na które student jest zapisany w ramach tego przedmiotu.</p>";
 
     $oceny_do_sredniej = [];
     $zaliczone_formy = [];
 
+    // 3. Sprawdź warunki dla każdego komponentu
     foreach ($oceny_studenta as $ocena_komponentu) {
-        if ($ocena_komponentu['ostatnia_ocena_str'] === NULL || !$ocena_komponentu['czy_ostatnia_zatwierdzona']) {
+        echo "<hr><strong>Sprawdzam komponent: '" . $ocena_komponentu['forma_zajec'] . "'</strong><br>";
+
+        if ($ocena_komponentu['ostatnia_ocena_str'] === NULL) {
+             echo "<p style='color:red;'>WARUNEK NIESPEŁNIONY: Brak jakiejkolwiek oceny z tego komponentu. Przerywam.</p>";
+             return false;
+        }
+        echo "OK: Znaleziono ostatnią ocenę: '" . $ocena_komponentu['ostatnia_ocena_str'] . "'.<br>";
+
+        if (empty($ocena_komponentu['czy_ostatnia_zatwierdzona'])) {
+            echo "<p style='color:red;'>WARUNEK NIESPEŁNIONY: Ostatnia ocena z tego komponentu NIE JEST ZATWIERDZONA (checkbox nie jest zaznaczony). Przerywam.</p>";
             return false;
         }
+        echo "OK: Ostatnia ocena jest ZATWIERDZONA.<br>";
+
         $ocena_str = strtoupper(trim($ocena_komponentu['ostatnia_ocena_str']));
+        
         if (is_numeric($ocena_str)) {
             $ocena_numeryczna = (float)$ocena_str;
-            if ($ocena_numeryczna < 3.0) return false;
+            if ($ocena_numeryczna < 3.0) {
+                 echo "<p style='color:red;'>WARUNEK NIESPEŁNIONY: Ocena numeryczna " . $ocena_numeryczna . " jest negatywna. Przerywam.</p>";
+                 return false;
+            }
             $oceny_do_sredniej[] = ['ocena' => $ocena_numeryczna, 'waga' => $ocena_komponentu['waga_oceny']];
             $zaliczone_formy[] = $ocena_komponentu['forma_zajec'];
+            echo "OK: Ocena numeryczna jest pozytywna.<br>";
         } 
         elseif ($ocena_str == 'ZAL') {
             $zaliczone_formy[] = $ocena_komponentu['forma_zajec'];
+            echo "OK: Ocena 'ZAL' jest pozytywna.<br>";
         } 
-        else { return false; }
+        else {
+            echo "<p style='color:red;'>WARUNEK NIESPEŁNIONY: Ocena '" . $ocena_str . "' jest negatywna (np. NZAL) lub nierozpoznana. Przerywam.</p>";
+            return false;
+        }
     }
 
-    if(count(array_unique($zaliczone_formy)) !== count($wymagane_formy)) return false; 
+    echo "<hr><p>Sprawdzanie kompletu zaliczeń... Student zaliczył " . count(array_unique($zaliczone_formy)) . " unikalnych form na " . count($wymagane_formy) . " wymaganych.</p>";
+    if(count(array_unique($zaliczone_formy)) !== count($wymagane_formy)) {
+         echo "<p style='color:red;'>WARUNEK NIESPEŁNIONY: Brak kompletu zaliczeń ze wszystkich wymaganych form. Przerywam.</p>";
+        return false; 
+    }
+
+    echo "<p style='color:green; font-weight:bold;'>SUKCES: Wszystkie warunki spełnione. Przystępuję do obliczeń.</p>";
     
+    // Obliczenia i zapis
     if (empty($oceny_do_sredniej)) {
         $ocena_calkowita_do_zapisu = "zal";
     } else {
@@ -72,13 +108,20 @@ function obliczIZapiszOceneCalkowita(mysqli $conn, int $numer_albumu, int $konfi
             $ocena_calkowita_do_zapisu = number_format($ocena_calkowita_numeryczna, 2);
         }
     }
-
     $zapis_oceny_sql = "INSERT INTO OcenyCalkowiteZPrzedmiotu (numer_albumu, konfiguracja_id, wartosc_obliczona, data_obliczenia) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE wartosc_obliczona = VALUES(wartosc_obliczona), data_obliczenia = NOW()";
     $stmt_zapis_oceny = $conn->prepare($zapis_oceny_sql);
     $stmt_zapis_oceny->bind_param("iis", $numer_albumu, $konfiguracja_id, $ocena_calkowita_do_zapisu);
     $stmt_zapis_oceny->execute();
+
+    if ($stmt_zapis_oceny->affected_rows > 0) {
+        echo "<p style='color:blue;'>INFO: Zapisano ocenę w bazie danych.</p>";
+    } else {
+        echo "<p style='color:orange;'>INFO: Ocena w bazie danych nie została zmieniona (prawdopodobnie była już taka sama).</p>";
+    }
+    echo "<h3>--- Koniec diagnostyki funkcji ---</h3>";
     return true;
 }
+
 
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
@@ -138,12 +181,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 
             case 'add_zajecia':
                 $konfiguracja_id = (int)$_POST['konfiguracja_id'];
-                $prowadzacy_id = (int)$_POST['prowadzacy_id'];
+                $prowadzacy_id = !empty($_POST['prowadzacy_id']) ? (int)$_POST['prowadzacy_id'] : null;
                 $grupa_id = (int)$_POST['grupa_id'];
                 $forma_zajec = $_POST['forma_zajec'];
-                $waga_oceny = (float)$_POST['waga_oceny'];
-                $stmt = $conn->prepare("INSERT INTO Zajecia (konfiguracja_id, prowadzacy_id, grupa_id, forma_zajec, waga_oceny) VALUES (?, ?, ?, ?, ?)");
-                $stmt->bind_param("iiisd", $konfiguracja_id, $prowadzacy_id, $grupa_id, $forma_zajec, $waga_oceny);
+                
+                $stmt = $conn->prepare("INSERT INTO Zajecia (konfiguracja_id, prowadzacy_id, grupa_id, forma_zajec) VALUES (?, ?, ?, ?)");
+                $stmt->bind_param("iiis", $konfiguracja_id, $prowadzacy_id, $grupa_id, $forma_zajec);
                 $stmt->execute();
                 $nowe_zajecia_id = $conn->insert_id;
                 $studenci_w_grupie_sql = "SELECT DISTINCT zs.numer_albumu FROM ZapisyStudentow zs JOIN Zajecia z ON zs.zajecia_id = z.zajecia_id WHERE z.grupa_id = ? AND z.zajecia_id != ?";
@@ -161,6 +204,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 }
                 redirect_with_message('zajecia_lista', 'success', 'Utworzono nowe zajęcia i automatycznie zapisano na nie studentów z grupy.');
                 break;
+
+            case 'przypisz_prowadzacego':
+                $zajecia_id = (int)$_POST['zajecia_id'];
+                $prowadzacy_id = (int)$_POST['prowadzacy_id'];
+
+                $stmt = $conn->prepare("UPDATE Zajecia SET prowadzacy_id = ? WHERE zajecia_id = ?");
+                $stmt->bind_param("ii", $prowadzacy_id, $zajecia_id);
+                $stmt->execute();
+                
+                redirect_with_message('zajecia_obsada_form', 'success', 'Prowadzący został pomyślnie przypisany do zajęć.');
+                break;
+
             case 'zapisz_obecnosc':
                 $termin_id = (int)$_POST['termin_id'];
                 $obecnosc_post = $_POST['obecnosc'] ?? [];
@@ -177,6 +232,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 }
                 redirect_with_message('obecnosc_plan_nauczyciela', 'success', 'Obecność została zapisana.');
                 break;
+
+            case 'zapisz_konfiguracje_komponentu':
+                $konfiguracja_id = (int)$_POST['konfiguracja_id'];
+                $forma_zajec = $_POST['forma_zajec'];
+                $waga_oceny = (float)$_POST['waga_oceny'];
+
+                $sql = "INSERT INTO KonfiguracjaKomponentow (konfiguracja_id, forma_zajec, waga_oceny) VALUES (?, ?, ?)
+                        ON DUPLICATE KEY UPDATE waga_oceny = VALUES(waga_oceny)";
+                $stmt = $conn->prepare($sql);
+                $stmt->bind_param("isd", $konfiguracja_id, $forma_zajec, $waga_oceny);
+                $stmt->execute();
+                redirect_with_message('konfiguracje_komponentow_form', 'success', 'Waga dla komponentu została zapisana.');
+                break;    
 
             case 'zarzadzaj_zapisami_masowymi':
                 $zajecia_id = (int)$_POST['zajecia_id'];
@@ -224,6 +292,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 break;
 
             case 'wystaw_ocene_z_komponentu':
+                // Zapis ocen z komponentów (ta część jest poprawna)
                 $zajecia_id = (int)$_POST['zajecia_id'];
                 $oceny_post = $_POST['oceny'] ?? [];
                 $zatwierdzone_post = $_POST['zatwierdzone'] ?? [];
@@ -253,7 +322,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                         }
                     }
                 }
-                
+                echo "<h2>Zakończono zapis ocen z komponentów.</h2>";
+
+                // Uruchomienie diagnostyki
                 $konf_id_res = $conn->query("SELECT konfiguracja_id FROM Zajecia WHERE zajecia_id = $zajecia_id")->fetch_assoc();
                 $konfiguracja_id = $konf_id_res['konfiguracja_id'];
                 if ($konfiguracja_id) {
@@ -266,13 +337,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                         $stmt_albumy->execute();
                         $albumy_res = $stmt_albumy->get_result()->fetch_all(MYSQLI_ASSOC);
                         foreach ($albumy_res as $row) {
+                            echo "<hr><p><b>Wywołuję funkcję obliczającą dla studenta o numerze albumu: " . $row['numer_albumu'] . "</b></p>";
                             obliczIZapiszOceneCalkowita($conn, $row['numer_albumu'], $konfiguracja_id);
                         }
                     }
                 }
+                echo "<h2>Zakończono handler. Przekierowanie jest wyłączone na potrzeby diagnostyki.</h2>";
                 
-                $redirect_url = "oceny_wprowadz_form&zajecia_id={$zajecia_id}";
-                redirect_with_message($redirect_url, 'success', 'Oceny zostały zapisane. System podjął próbę obliczenia ocen końcowych.');
+                // Celowo wyłączamy przekierowanie
+                redirect_with_message('oceny_wprowadz_form&zajecia_id='.$zajecia_id, 'success', 'Oceny zostały zapisane.');
                 break;
 
             // W pliku handler.php
@@ -515,6 +588,67 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 }
                 
                 redirect_with_message('wybory_admin_wyniki', 'success', "Dopisano $zapisano_licznik nowych studentów do wybranych zajęć.");
+                break;
+                
+            case 'edit_konfiguracja':
+                $konfiguracja_id = (int)$_POST['konfiguracja_id'];
+                $punkty_ects = (int)$_POST['punkty_ects'];
+
+                $stmt = $conn->prepare("UPDATE KonfiguracjaPrzedmiotu SET punkty_ects = ? WHERE konfiguracja_id = ?");
+                $stmt->bind_param("ii", $punkty_ects, $konfiguracja_id);
+                $stmt->execute();
+                redirect_with_message('konfiguracje_lista', 'success', 'Liczba punktów ECTS została zaktualizowana.');
+                break;
+
+            case 'delete_konfiguracja':
+                $konfiguracja_id = (int)$_POST['konfiguracja_id'];
+
+                // Zabezpieczenie po stronie serwera
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM Zajecia WHERE konfiguracja_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $konfiguracja_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('konfiguracje_lista', 'error', 'Nie można usunąć. Ta konfiguracja jest już przypisana do zajęć.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM KonfiguracjaPrzedmiotu WHERE konfiguracja_id = ?");
+                    $stmt->bind_param("i", $konfiguracja_id);
+                    $stmt->execute();
+                    redirect_with_message('konfiguracje_lista', 'success', 'Konfiguracja przedmiotu została usunięta.');
+                }
+                break;
+
+
+            case 'edit_przedmiot':
+                $przedmiot_id = (int)$_POST['przedmiot_id'];
+                $nowa_nazwa = $_POST['nazwa_przedmiotu'];
+
+                $stmt = $conn->prepare("UPDATE Przedmioty SET nazwa_przedmiotu = ? WHERE przedmiot_id = ?");
+                $stmt->bind_param("si", $nowa_nazwa, $przedmiot_id);
+                $stmt->execute();
+                redirect_with_message('przedmioty_lista', 'success', 'Nazwa przedmiotu została zaktualizowana.');
+                break;
+
+            case 'delete_przedmiot':
+                $przedmiot_id = (int)$_POST['przedmiot_id'];
+
+                // Podwójne zabezpieczenie po stronie serwera
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM KonfiguracjaPrzedmiotu WHERE przedmiot_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $przedmiot_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('przedmioty_lista', 'error', 'Nie można usunąć przedmiotu, ponieważ jest on używany w konfiguracjach.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM Przedmioty WHERE przedmiot_id = ?");
+                    $stmt->bind_param("i", $przedmiot_id);
+                    $stmt->execute();
+                    redirect_with_message('przedmioty_lista', 'success', 'Przedmiot został usunięty.');
+                }
                 break;
 
             case 'dodaj_szablon_planu':

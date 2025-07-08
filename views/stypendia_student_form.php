@@ -15,7 +15,7 @@ $wybrane_semestry_str = '';
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['oblicz_srednia'])) {
     $pokaz_wyniki = true;
     $wybrane_semestry_str = $_POST['semestry_rok'];
-    $semestry = explode('-', $wybrane_semestry_str); // np. "3-4" -> [3, 4]
+    $semestry = explode(',', $wybrane_semestry_str); // np. "3-4" -> [3, 4]
     
     // Pobierz wszystkie oceny końcowe i ECTS dla wybranych semestrów
     $oceny_sql = "

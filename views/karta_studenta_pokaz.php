@@ -1,5 +1,5 @@
 <?php
-// Plik: views/karta_studenta_pokaz.php (Wersja ze statystykami)
+// Plik: views/karta_studenta_pokaz.php (Wersja z poprawionym pobieraniem wagi)
 
 if (!isset($_GET['numer_albumu'])) {
     echo "<h1>Błąd</h1><p>Nie wybrano studenta. <a href='index.php?page=karta_studenta_wybor'>Wróć do wyboru</a>.</p>";
@@ -19,32 +19,41 @@ $max_semestr = $semestry_info['max_sem'] ?? 1;
 $biezacy_semestr = isset($_GET['semestr']) ? (int)$_GET['semestr'] : $min_semestr;
 
 
-// --- Główna logika pobierania danych (bez zmian) ---
-// (Pozostawiamy tutaj cały kod PHP z poprzedniej wersji, który pobiera dane do tabeli ocen)
-// ... (kod od $komponenty_sql do $oceny_calkowite = []) ...
+// --- Główna logika pobierania danych ---
 
 // 1. Pobierz wszystkie komponenty (zajęcia), na które student był zapisany w danym semestrze
+// ZMIANA: Zapytanie pobiera teraz wagę z tabeli KonfiguracjaKomponentow
 $komponenty_sql = "
     SELECT 
-        k.konfiguracja_id, p.nazwa_przedmiotu, z.forma_zajec, z.zajecia_id, zs.zapis_id,
-        CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko) as prowadzacy, z.waga_oceny
+        k.konfiguracja_id,
+        p.nazwa_przedmiotu,
+        z.forma_zajec,
+        z.zajecia_id,
+        zs.zapis_id,
+        -- ZMIANA: Używamy IFNULL, aby wyświetlić 'Brak przypisania' gdy prowadzący to NULL
+        IFNULL(CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko), '') as prowadzacy,
+        kk.waga_oceny
     FROM ZapisyStudentow zs
     JOIN Zajecia z ON zs.zajecia_id = z.zajecia_id
     JOIN GrupyZajeciowe g ON z.grupa_id = g.grupa_id
     JOIN KonfiguracjaPrzedmiotu k ON z.konfiguracja_id = k.konfiguracja_id
+    LEFT JOIN KonfiguracjaKomponentow kk ON k.konfiguracja_id = kk.konfiguracja_id AND z.forma_zajec = kk.forma_zajec
     JOIN Przedmioty p ON k.przedmiot_id = p.przedmiot_id
-    JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
+    LEFT JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
     WHERE zs.numer_albumu = ? AND g.semestr = ?
-    ORDER BY p.nazwa_przedmiotu, z.forma_zajec DESC";
+    ORDER BY p.nazwa_przedmiotu, z.forma_zajec
+";
 $stmt_komponenty = $conn->prepare($komponenty_sql);
 $stmt_komponenty->bind_param("ii", $numer_albumu, $biezacy_semestr);
 $stmt_komponenty->execute();
 $komponenty_res = $stmt_komponenty->get_result()->fetch_all(MYSQLI_ASSOC);
+
 $przedmioty_w_semestrze = [];
 foreach($komponenty_res as $komponent) {
     $przedmioty_w_semestrze[$komponent['konfiguracja_id']]['nazwa'] = $komponent['nazwa_przedmiotu'];
     $przedmioty_w_semestrze[$komponent['konfiguracja_id']]['komponenty'][] = $komponent;
 }
+
 // 2. Pobierz wszystkie ZATWIERDZONE oceny z komponentów dla tego studenta
 $oceny_komp_sql = "SELECT ocena_komponentu_id, zapis_id, termin, wartosc_oceny FROM OcenyKoncoweZKomponentu WHERE zapis_id IN (SELECT zapis_id FROM ZapisyStudentow WHERE numer_albumu = ?) AND czy_zatwierdzona = TRUE";
 $stmt_oceny_k = $conn->prepare($oceny_komp_sql);
@@ -55,8 +64,14 @@ $oceny_z_komponentow = [];
 foreach($oceny_komp_res as $ocena) {
     $oceny_z_komponentow[$ocena['zapis_id']][$ocena['termin']] = $ocena;
 }
+
 // 3. Pobierz oceny całkowite (obliczone) i punkty ECTS
-$oceny_calk_sql = "SELECT oc.konfiguracja_id, oc.wartosc_obliczona, kp.punkty_ects FROM OcenyCalkowiteZPrzedmiotu oc JOIN KonfiguracjaPrzedmiotu kp ON oc.konfiguracja_id = kp.konfiguracja_id WHERE oc.numer_albumu = ?";
+$oceny_calk_sql = "
+    SELECT oc.konfiguracja_id, oc.wartosc_obliczona, kp.punkty_ects 
+    FROM OcenyCalkowiteZPrzedmiotu oc
+    JOIN KonfiguracjaPrzedmiotu kp ON oc.konfiguracja_id = kp.konfiguracja_id
+    WHERE oc.numer_albumu = ?
+";
 $stmt_oceny_c = $conn->prepare($oceny_calk_sql);
 $stmt_oceny_c->bind_param("i", $numer_albumu);
 $stmt_oceny_c->execute();
