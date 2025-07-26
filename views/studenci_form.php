@@ -28,7 +28,7 @@
         <label for="status_studenta">Status</label>
         <select id="status_studenta" name="status_studenta" required>
             <option value="aktywny">Aktywny</option>
-            <option value="urlop">Na urlopie</option>
+            <option value="urlop">Urlop</option>
             <option value="absolwent">Absolwent</option>
             <option value="skreślony">Skreślony</option>
         </select>

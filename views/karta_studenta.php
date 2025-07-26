@@ -41,7 +41,7 @@ $komponenty_sql = "
     JOIN Przedmioty p ON k.przedmiot_id = p.przedmiot_id
     LEFT JOIN Prowadzacy pr ON z.prowadzacy_id = pr.prowadzacy_id
     WHERE zs.numer_albumu = ? AND g.semestr = ?
-    ORDER BY p.nazwa_przedmiotu, z.forma_zajec
+    ORDER BY p.nazwa_przedmiotu, z.forma_zajec desc
 ";
 $stmt_komponenty = $conn->prepare($komponenty_sql);
 $stmt_komponenty->bind_param("ii", $numer_albumu, $biezacy_semestr);

@@ -145,10 +145,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 break;
 
             case 'add_przedmiot':
-                $stmt = $conn->prepare("INSERT INTO Przedmioty (nazwa_przedmiotu) VALUES (?)");
-                $stmt->bind_param("s", $_POST['nazwa_przedmiotu']);
+                $nazwa_przedmiotu = $_POST['nazwa_przedmiotu'];
+                $wydzial_id = (int)$_POST['wydzial_id'];
+
+                $stmt = $conn->prepare("INSERT INTO Przedmioty (nazwa_przedmiotu, wydzial_id) VALUES (?, ?)");
+                $stmt->bind_param("si", $nazwa_przedmiotu, $wydzial_id);
                 $stmt->execute();
-                redirect_with_message('przedmioty_lista', 'success', 'Dodano nowy przedmiot.');
+                redirect_with_message('przedmioty_lista', 'success', 'Dodano nowy przedmiot i przypisano go do wydziału.');
                 break;
                 
             case 'add_sala':
@@ -238,43 +241,87 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 $forma_zajec = $_POST['forma_zajec'];
                 $waga_oceny = (float)$_POST['waga_oceny'];
 
+                // Upewnij się, że nazwa tabeli to "KonfiguracjaKomponentow" (z 's' na końcu)
                 $sql = "INSERT INTO KonfiguracjaKomponentow (konfiguracja_id, forma_zajec, waga_oceny) VALUES (?, ?, ?)
                         ON DUPLICATE KEY UPDATE waga_oceny = VALUES(waga_oceny)";
+                
                 $stmt = $conn->prepare($sql);
                 $stmt->bind_param("isd", $konfiguracja_id, $forma_zajec, $waga_oceny);
                 $stmt->execute();
-                redirect_with_message('konfiguracje_komponentow_form', 'success', 'Waga dla komponentu została zapisana.');
-                break;    
-
+                redirect_with_message('konfiguracje_lista', 'success', 'Waga dla komponentu została zapisana.');
+                break;
+                
             case 'zarzadzaj_zapisami_masowymi':
                 $zajecia_id = (int)$_POST['zajecia_id'];
                 $rok_rozpoczecia = (int)$_POST['rok_rozpoczecia'];
-                $studenci_do_zapisu = $_POST['studenci_do_zapisu'] ?? [];
-                $aktualnie_zapisani_sql = "SELECT numer_albumu FROM ZapisyStudentow WHERE zajecia_id = ?";
-                $stmt_aktualni = $conn->prepare($aktualnie_zapisani_sql);
+                $studenci_z_formularza = $_POST['studenci_do_zapisu'] ?? [];
+                $stmt_rocznik = $conn->prepare("SELECT numer_albumu FROM Studenci WHERE rok_rozpoczecia_studiow = ?");
+                $stmt_rocznik->bind_param("i", $rok_rozpoczecia);
+                $stmt_rocznik->execute();
+                $wszyscy_z_rocznika = array_column($stmt_rocznik->get_result()->fetch_all(MYSQLI_ASSOC), 'numer_albumu');
+                $stmt_aktualni = $conn->prepare("SELECT numer_albumu FROM ZapisyStudentow WHERE zajecia_id = ?");
                 $stmt_aktualni->bind_param("i", $zajecia_id);
                 $stmt_aktualni->execute();
                 $aktualnie_zapisani = array_column($stmt_aktualni->get_result()->fetch_all(MYSQLI_ASSOC), 'numer_albumu');
-                $do_dodania = array_diff($studenci_do_zapisu, $aktualnie_zapisani);
-                $do_usuniecia = array_diff($aktualnie_zapisani, $studenci_do_zapisu);
+                $do_dodania = array_diff($studenci_z_formularza, $aktualnie_zapisani);
+                $odznaczeni_z_rocznika = array_diff($wszyscy_z_rocznika, $studenci_z_formularza);
+                $do_usuniecia = array_intersect($odznaczeni_z_rocznika, $aktualnie_zapisani);
                 if (!empty($do_dodania)) {
-                    $stmt_insert = $conn->prepare("INSERT INTO ZapisyStudentow (numer_albumu, zajecia_id) VALUES (?, ?)");
+                    $stmt_insert = $conn->prepare("INSERT IGNORE INTO ZapisyStudentow (numer_albumu, zajecia_id) VALUES (?, ?)");
                     foreach ($do_dodania as $numer_albumu) {
                         $stmt_insert->bind_param("ii", $numer_albumu, $zajecia_id);
                         $stmt_insert->execute();
                     }
                 }
                 if (!empty($do_usuniecia)) {
-                    $placeholders = implode(',', array_fill(0, count($do_usuniecia), '?'));
-                    $stmt_delete = $conn->prepare("DELETE FROM ZapisyStudentow WHERE zajecia_id = ? AND numer_albumu IN ($placeholders)");
-                    $types = 'i' . str_repeat('i', count($do_usuniecia));
-                    $params = array_merge([$zajecia_id], $do_usuniecia);
-                    $stmt_delete->bind_param($types, ...$params);
-                    $stmt_delete->execute();
+                    // POPRAWKA: Zamiast skomplikowanego bindowania, tworzymy bezpieczny string z ID
+                    $ids_to_delete_str = implode(',', array_map('intval', $do_usuniecia));
+                    $conn->query("DELETE FROM ZapisyStudentow WHERE zajecia_id = $zajecia_id AND numer_albumu IN ($ids_to_delete_str)");
                 }
                 $redirect_url = "zapisy_masowe_zarzadzaj&zajecia_id={$zajecia_id}&rok_rozpoczecia={$rok_rozpoczecia}";
                 redirect_with_message($redirect_url, 'success', 'Zapisy na zajęcia zostały zaktualizowane.');
                 break;
+                
+            case 'zarzadzaj_zapisami_studenta':
+                $numer_albumu = (int)$_POST['numer_albumu'];
+                $rok_id = (int)$_POST['rok_id'];
+                $semestr = (int)$_POST['semestr'];
+                $zajecia_zaznaczone = $_POST['zajecia_ids'] ?? [];
+
+                $grupy_studenta_sql = "SELECT DISTINCT z.grupa_id FROM ZapisyStudentow zs JOIN Zajecia z ON zs.zajecia_id = z.zajecia_id JOIN GrupyZajeciowe g ON z.grupa_id = g.grupa_id WHERE zs.numer_albumu = ? AND g.rok_akademicki_id = ? AND g.semestr = ?";
+                $stmt_grupy = $conn->prepare($grupy_studenta_sql);
+                $stmt_grupy->bind_param("iii", $numer_albumu, $rok_id, $semestr);
+                $stmt_grupy->execute();
+                $grupy_ids = array_column($stmt_grupy->get_result()->fetch_all(MYSQLI_ASSOC), 'grupa_id');
+                
+                $wszystkie_istotne_zajecia_ids = [];
+                if (!empty($grupy_ids)) {
+                    $placeholders = implode(',', array_map('intval', $grupy_ids));
+                    $zajecia_sql = "SELECT zajecia_id FROM Zajecia WHERE grupa_id IN ($placeholders)";
+                    $zajecia_res = $conn->query($zajecia_sql);
+                    $wszystkie_istotne_zajecia_ids = array_column($zajecia_res->fetch_all(MYSQLI_ASSOC), 'zajecia_id');
+                }
+
+                if (!empty($zajecia_zaznaczone)) {
+                    $stmt_zapisz = $conn->prepare("INSERT IGNORE INTO ZapisyStudentow (numer_albumu, zajecia_id) VALUES (?, ?)");
+                    foreach ($zajecia_zaznaczone as $zajecia_id_raw) {
+                        // POPRAWKA: Tworzymy nową zmienną przed bindowaniem
+                        $zajecia_id = (int)$zajecia_id_raw;
+                        $stmt_zapisz->bind_param("ii", $numer_albumu, $zajecia_id);
+                        $stmt_zapisz->execute();
+                    }
+                }
+
+                $do_usuniecia = array_diff($wszystkie_istotne_zajecia_ids, $zajecia_zaznaczone);
+                if (!empty($do_usuniecia)) {
+                    $ids_to_delete_str = implode(',', array_map('intval', $do_usuniecia));
+                    $conn->query("DELETE FROM ZapisyStudentow WHERE numer_albumu = $numer_albumu AND zajecia_id IN ($ids_to_delete_str)");
+                }
+
+                $redirect_url = "student_zapisy_form&rok_id={$rok_id}&semestr={$semestr}&numer_albumu={$numer_albumu}";
+                redirect_with_message($redirect_url, 'success', 'Zapisy studenta zostały zaktualizowane.');
+                break;
+
 
             case 'dodaj_ocene_czastkowa':
                 $zajecia_id = (int)$_POST['zajecia_id'];
@@ -589,7 +636,175 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 
                 redirect_with_message('wybory_admin_wyniki', 'success', "Dopisano $zapisano_licznik nowych studentów do wybranych zajęć.");
                 break;
-                
+            
+            case 'edit_grupa':
+                $grupa_id = (int)$_POST['grupa_id'];
+                $nazwa_grupy = $_POST['nazwa_grupy'];
+                $semestr = (int)$_POST['semestr'];
+                $rok_akademicki_id = (int)$_POST['rok_akademicki_id'];
+
+                $stmt = $conn->prepare("UPDATE GrupyZajeciowe SET nazwa_grupy = ?, semestr = ?, rok_akademicki_id = ? WHERE grupa_id = ?");
+                $stmt->bind_param("siii", $nazwa_grupy, $semestr, $rok_akademicki_id, $grupa_id);
+                $stmt->execute();
+                redirect_with_message('grupy_lista', 'success', 'Dane grupy zostały zaktualizowane.');
+                break;
+
+            case 'edit_zajecia':
+                $zajecia_id = (int)$_POST['zajecia_id'];
+                $grupa_id = (int)$_POST['grupa_id'];
+                $prowadzacy_id = !empty($_POST['prowadzacy_id']) ? (int)$_POST['prowadzacy_id'] : null;
+
+                $stmt = $conn->prepare("UPDATE Zajecia SET grupa_id = ?, prowadzacy_id = ? WHERE zajecia_id = ?");
+                $stmt->bind_param("iii", $grupa_id, $prowadzacy_id, $zajecia_id);
+                $stmt->execute();
+                redirect_with_message('zajecia_lista', 'success', 'Dane zajęć zostały zaktualizowane.');
+                break;
+
+            case 'delete_zajecia':
+                $zajecia_id = (int)$_POST['zajecia_id'];
+
+                // Zabezpieczenie po stronie serwera - sprawdź, czy jacyś studenci są zapisani
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM ZapisyStudentow WHERE zajecia_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $zajecia_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('zajecia_lista', 'error', 'Nie można usunąć zajęć, ponieważ są do nich zapisani studenci.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM Zajecia WHERE zajecia_id = ?");
+                    $stmt->bind_param("i", $zajecia_id);
+                    $stmt->execute();
+                    redirect_with_message('zajecia_lista', 'success', 'Zajęcia zostały usunięte.');
+                }
+                break;
+
+            case 'dodaj_wpis_przebiegu':
+                $numer_albumu = (int)$_POST['numer_albumu'];
+                $semestr = (int)$_POST['semestr'];
+                $rok_akademicki_id = (int)$_POST['rok_akademicki_id'];
+                $status_semestru = $_POST['status_semestru'];
+                $stmt = $conn->prepare("INSERT INTO PrzebiegStudiow (numer_albumu, semestr, rok_akademicki_id, status_semestru) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE status_semestru=VALUES(status_semestru)");
+                $stmt->bind_param("iiis", $numer_albumu, $semestr, $rok_akademicki_id, $status_semestru);
+                $stmt->execute();
+                redirect_with_message('student_profil&numer_albumu='.$numer_albumu.'&tab=przebieg', 'success', 'Dodano nowy wpis w przebiegu studiów.');
+                break;
+
+            case 'edit_student':
+                $numer_albumu = (int)$_POST['numer_albumu'];
+                // Pobieramy wszystkie nowe dane z formularza
+                $imie = $_POST['imie'];
+                $nazwisko = $_POST['nazwisko'];
+                $pesel = $_POST['pesel'];
+                $data_urodzenia = $_POST['data_urodzenia'];
+                $adres_zamieszkania = $_POST['adres_zamieszkania'];
+                $telefon = $_POST['telefon'];
+                $email = $_POST['email'];
+                $rok_rozpoczecia_studiow = (int)$_POST['rok_rozpoczecia_studiow'];
+                $status_studenta = $_POST['status_studenta'];
+
+                $stmt = $conn->prepare("UPDATE Studenci SET imie=?, nazwisko=?, pesel=?, data_urodzenia=?, adres_zamieszkania=?, telefon=?, email=?, rok_rozpoczecia_studiow=?, status_studenta=? WHERE numer_albumu=?");
+                $stmt->bind_param("sssssssisi", $imie, $nazwisko, $pesel, $data_urodzenia, $adres_zamieszkania, $telefon, $email, $rok_rozpoczecia_studiow, $status_studenta, $numer_albumu);
+                $stmt->execute();
+                redirect_with_message('student_profil&numer_albumu='.$numer_albumu.'&tab=dane', 'success', 'Dane studenta zostały zaktualizowane.');
+                break;
+
+            case 'edit_rok':
+                $rok_id = (int)$_POST['rok_id'];
+                $nazwa_roku = $_POST['nazwa_roku'];
+                $stmt = $conn->prepare("UPDATE RokiAkademickie SET nazwa_roku = ? WHERE rok_akademicki_id = ?");
+                $stmt->bind_param("si", $nazwa_roku, $rok_id);
+                $stmt->execute();
+                redirect_with_message('roki_lista', 'success', 'Nazwa roku akademickiego została zaktualizowana.');
+                break;
+
+            case 'delete_rok':
+                $rok_id = (int)$_POST['rok_id'];
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM KonfiguracjaPrzedmiotu WHERE rok_akademicki_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $rok_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('roki_lista', 'error', 'Nie można usunąć roku, jest używany w konfiguracjach przedmiotów.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM RokiAkademickie WHERE rok_akademicki_id = ?");
+                    $stmt->bind_param("i", $rok_id);
+                    $stmt->execute();
+                    redirect_with_message('roki_lista', 'success', 'Rok akademicki został usunięty.');
+                }
+                break;
+
+            case 'edit_sala':
+                $sala_id = (int)$_POST['sala_id'];
+                $budynek = $_POST['budynek'];
+                $numer_sali = $_POST['numer_sali'];
+
+                $stmt = $conn->prepare("UPDATE SaleZajeciowe SET budynek = ?, numer_sali = ? WHERE sala_id = ?");
+                $stmt->bind_param("ssi", $budynek, $numer_sali, $sala_id);
+                $stmt->execute();
+                redirect_with_message('sale_lista', 'success', 'Dane sali zostały zaktualizowane.');
+                break;
+
+            case 'delete_sala':
+                $sala_id = (int)$_POST['sala_id'];
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM TerminyZajec WHERE sala_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $sala_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('sale_lista', 'error', 'Nie można usunąć sali, jest używana w planie zajęć.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM SaleZajeciowe WHERE sala_id = ?");
+                    $stmt->bind_param("i", $sala_id);
+                    $stmt->execute();
+                    redirect_with_message('sale_lista', 'success', 'Sala została usunięta.');
+                }
+                break;
+                        
+            case 'delete_student':
+                $numer_albumu = (int)$_POST['numer_albumu'];
+
+                // Zabezpieczenie po stronie serwera
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM ZapisyStudentow WHERE numer_albumu = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $numer_albumu);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('studenci_lista', 'error', 'Nie można usunąć studenta, który jest zapisany na zajęcia. Zmień jego status na "skreślony".');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM Studenci WHERE numer_albumu = ?");
+                    $stmt->bind_param("i", $numer_albumu);
+                    $stmt->execute();
+                    redirect_with_message('studenci_lista', 'success', 'Student został usunięty z bazy danych.');
+                }
+                break;
+
+            case 'delete_grupa':
+                $grupa_id = (int)$_POST['grupa_id'];
+
+                // Zabezpieczenie po stronie serwera
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM Zajecia WHERE grupa_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $grupa_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('grupy_lista', 'error', 'Nie można usunąć grupy, ponieważ jest przypisana do zajęć.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM GrupyZajeciowe WHERE grupa_id = ?");
+                    $stmt->bind_param("i", $grupa_id);
+                    $stmt->execute();
+                    redirect_with_message('grupy_lista', 'success', 'Grupa została usunięta.');
+                }
+                break;
+
             case 'edit_konfiguracja':
                 $konfiguracja_id = (int)$_POST['konfiguracja_id'];
                 $punkty_ects = (int)$_POST['punkty_ects'];
@@ -624,11 +839,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
             case 'edit_przedmiot':
                 $przedmiot_id = (int)$_POST['przedmiot_id'];
                 $nowa_nazwa = $_POST['nazwa_przedmiotu'];
+                $wydzial_id = (int)$_POST['wydzial_id'];
 
-                $stmt = $conn->prepare("UPDATE Przedmioty SET nazwa_przedmiotu = ? WHERE przedmiot_id = ?");
-                $stmt->bind_param("si", $nowa_nazwa, $przedmiot_id);
+                $stmt = $conn->prepare("UPDATE Przedmioty SET nazwa_przedmiotu = ?, wydzial_id = ? WHERE przedmiot_id = ?");
+                $stmt->bind_param("sii", $nowa_nazwa, $wydzial_id, $przedmiot_id);
                 $stmt->execute();
-                redirect_with_message('przedmioty_lista', 'success', 'Nazwa przedmiotu została zaktualizowana.');
+                redirect_with_message('przedmioty_lista', 'success', 'Dane przedmiotu zostały zaktualizowane.');
                 break;
 
             case 'delete_przedmiot':
@@ -648,6 +864,76 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                     $stmt->bind_param("i", $przedmiot_id);
                     $stmt->execute();
                     redirect_with_message('przedmioty_lista', 'success', 'Przedmiot został usunięty.');
+                }
+                break;
+
+            case 'edit_prowadzacy':
+                $prowadzacy_id = (int)$_POST['prowadzacy_id'];
+                $imie = $_POST['imie'];
+                $nazwisko = $_POST['nazwisko'];
+                $tytul_naukowy = $_POST['tytul_naukowy'];
+                $email = $_POST['email'];
+                $is_admin = (int)$_POST['is_admin'];
+
+                $stmt = $conn->prepare("UPDATE Prowadzacy SET imie = ?, nazwisko = ?, tytul_naukowy = ?, email = ?, is_admin = ? WHERE prowadzacy_id = ?");
+                $stmt->bind_param("ssssii", $imie, $nazwisko, $tytul_naukowy, $email, $is_admin, $prowadzacy_id);
+                $stmt->execute();
+                redirect_with_message('prowadzacy_lista', 'success', 'Dane prowadzącego zostały zaktualizowane.');
+                break;
+
+            case 'add_wydzial':
+                $stmt = $conn->prepare("INSERT INTO Wydzialy (nazwa_wydzialu, skrot_wydzialu) VALUES (?, ?)");
+                $stmt->bind_param("ss", $_POST['nazwa_wydzialu'], $_POST['skrot_wydzialu']);
+                $stmt->execute();
+                redirect_with_message('wydzialy_lista', 'success', 'Dodano nowy wydział.');
+                break;
+            case 'edit_wydzial':
+                $stmt = $conn->prepare("UPDATE Wydzialy SET nazwa_wydzialu = ?, skrot_wydzialu = ? WHERE wydzial_id = ?");
+                $stmt->bind_param("ssi", $_POST['nazwa_wydzialu'], $_POST['skrot_wydzialu'], $_POST['wydzial_id']);
+                $stmt->execute();
+                redirect_with_message('wydzialy_lista', 'success', 'Dane wydziału zaktualizowano.');
+                break;
+            case 'delete_wydzial':
+                $wydzial_id = (int)$_POST['wydzial_id'];
+                $check = $conn->query("SELECT COUNT(*) as cnt FROM Przedmioty WHERE wydzial_id = $wydzial_id")->fetch_assoc()['cnt'];
+                if ($check > 0) {
+                    redirect_with_message('wydzialy_lista', 'error', 'Nie można usunąć wydziału, ma przypisane przedmioty.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM Wydzialy WHERE wydzial_id = ?");
+                    $stmt->bind_param("i", $wydzial_id);
+                    $stmt->execute();
+                    redirect_with_message('wydzialy_lista', 'success', 'Wydział został usunięty.');
+                }
+                break;
+
+            // Logika dla Przebiegu Studiów
+            case 'rejestruj_na_kolejny_semestr':
+                $numer_albumu = (int)$_POST['numer_albumu'];
+                $nastepny_semestr = (int)$_POST['aktualny_semestr'] + 1;
+                $biezacy_rok = $conn->query("SELECT rok_akademicki_id FROM RokiAkademickie ORDER BY nazwa_roku DESC LIMIT 1")->fetch_assoc()['rok_akademicki_id'];
+                $stmt = $conn->prepare("INSERT INTO PrzebiegStudiow (numer_albumu, semestr, rok_akademicki_id, status_semestru) VALUES (?, ?, ?, 'zarejestrowany') ON DUPLICATE KEY UPDATE status_semestru = 'zarejestrowany'");
+                $stmt->bind_param("iii", $numer_albumu, $nastepny_semestr, $biezacy_rok);
+                $stmt->execute();
+                redirect_with_message('student_profil&numer_albumu='.$numer_albumu.'&tab=przebieg', 'success', 'Student został zarejestrowany na kolejny semestr.');
+                break;
+
+            case 'delete_prowadzacy':
+                $prowadzacy_id = (int)$_POST['prowadzacy_id'];
+
+                // Zabezpieczenie po stronie serwera
+                $check_sql = "SELECT COUNT(*) as uzycie_count FROM Zajecia WHERE prowadzacy_id = ?";
+                $stmt_check = $conn->prepare($check_sql);
+                $stmt_check->bind_param("i", $prowadzacy_id);
+                $stmt_check->execute();
+                $uzycie = $stmt_check->get_result()->fetch_assoc();
+
+                if ($uzycie['uzycie_count'] > 0) {
+                    redirect_with_message('prowadzacy_lista', 'error', 'Nie można usunąć prowadzącego, ponieważ jest przypisany do zajęć.');
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM Prowadzacy WHERE prowadzacy_id = ?");
+                    $stmt->bind_param("i", $prowadzacy_id);
+                    $stmt->execute();
+                    redirect_with_message('prowadzacy_lista', 'success', 'Prowadzący został usunięty.');
                 }
                 break;
 
