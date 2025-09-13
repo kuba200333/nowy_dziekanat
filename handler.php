@@ -323,6 +323,126 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 break;
 
 
+            // W pliku handler.php wewnątrz switch($action)
+
+            case 'dodaj_preferencje_studenta':
+                $student_glowny_id = (int)$_POST['student_glowny_id'];
+                $student_docelowy_id = (int)$_POST['student_docelowy_id'];
+                $typ_preferencji = $_POST['typ_preferencji'];
+
+                $stmt = $conn->prepare("
+                    INSERT INTO PreferencjeStudentow (student_glowny_id, student_docelowy_id, typ_preferencji) 
+                    VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE typ_preferencji = VALUES(typ_preferencji)
+                ");
+                $stmt->bind_param("iis", $student_glowny_id, $student_docelowy_id, $typ_preferencji);
+                $stmt->execute();
+                
+                redirect_with_message('preferencje_studenta_form&numer_albumu=' . $student_glowny_id, 'success', 'Preferencja została zapisana.');
+                break;
+
+            // W pliku handler.php wewnątrz switch($action)
+
+            case 'generuj_grupy_robocze':
+                $wybor_id = (int)$_POST['wybor_id'];
+                $max_wielkosc = (int)$_POST['max_wielkosc_grupy'];
+
+                // 1. Wyczyść poprzednie wyniki dla tego naboru
+                $conn->query("DELETE FROM GrupyRobocze WHERE wybor_id = $wybor_id");
+
+                // 2. Pobierz studentów i ich wybrane przedmioty
+                $sql_odpowiedzi = "
+                    SELECT os.numer_albumu, p.nazwa_przedmiotu
+                    FROM OdpowiedziStudentow os
+                    JOIN OpcjeWyboru ow ON os.wybrana_opcja_id = ow.opcja_id
+                    JOIN Przedmioty p ON ow.przedmiot_id = p.przedmiot_id
+                    WHERE os.wybor_id = ?
+                ";
+                $stmt_odp = $conn->prepare($sql_odpowiedzi);
+                $stmt_odp->bind_param("i", $wybor_id);
+                $stmt_odp->execute();
+                $odpowiedzi = $stmt_odp->get_result()->fetch_all(MYSQLI_ASSOC);
+
+                // 3. Pobierz WSZYSTKIE preferencje z bazy
+                $preferencje_res = $conn->query("SELECT * FROM PreferencjeStudentow")->fetch_all(MYSQLI_ASSOC);
+                $preferencje = ['razem' => [], 'osobno' => []];
+                foreach($preferencje_res as $pref) {
+                    $preferencje[$pref['typ_preferencji']][$pref['student_glowny_id']][] = $pref['student_docelowy_id'];
+                    // Dodajemy też odwrotną relację dla bezpieczeństwa
+                    $preferencje[$pref['typ_preferencji']][$pref['student_docelowy_id']][] = $pref['student_glowny_id'];
+                }
+
+                // 4. Pogrupuj studentów wg identycznego zestawu przedmiotów
+                $bloki_przedmiotowe = [];
+                foreach($odpowiedzi as $odp) {
+                    $bloki_przedmiotowe[$odp['nazwa_przedmiotu']][] = $odp['numer_albumu'];
+                }
+
+                // --- NOWY, ZAAWANSOWANY ALGORYTM GRUPOWANIA ---
+                $stmt_grupa = $conn->prepare("INSERT INTO GrupyRobocze (nazwa_grupy_roboczej, wybor_id, opis_opcji_wyboru) VALUES (?, ?, ?)");
+                $stmt_czlonek = $conn->prepare("INSERT INTO CzlonkowieGrupRoboczych (grupa_robocza_id, numer_albumu) VALUES (?, ?)");
+
+                foreach($bloki_przedmiotowe as $opis_przedmiotow => $studenci_w_bloku) {
+                    $nieprzypisani = $studenci_w_bloku;
+                    $wygenerowane_grupy_w_bloku = [];
+                    $nr_grupy = 1;
+
+                    while(!empty($nieprzypisani)) {
+                        $nowa_grupa = [];
+                        $lider_grupy = array_shift($nieprzypisani); // Bierzemy pierwszego z listy
+                        $nowa_grupa[] = $lider_grupy;
+
+                        // Spróbuj dobrać do niego studentów z preferencją "razem"
+                        $partnerzy = $preferencje['razem'][$lider_grupy] ?? [];
+                        foreach($partnerzy as $partner_id) {
+                            if (count($nowa_grupa) < $max_wielkosc && in_array($partner_id, $nieprzypisani)) {
+                                $nowa_grupa[] = $partner_id;
+                                // Usuń partnera z listy nieprzypisanych
+                                $nieprzypisani = array_diff($nieprzypisani, [$partner_id]);
+                            }
+                        }
+
+                        // Dopełnij grupę pozostałymi studentami, sprawdzając konflikty
+                        foreach($nieprzypisani as $kandydat_id) {
+                            if (count($nowa_grupa) >= $max_wielkosc) break;
+
+                            $ma_konflikt = false;
+                            // Sprawdź, czy kandydat ma konflikt z kimś już w grupie
+                            $konflikty_kandydata = $preferencje['osobno'][$kandydat_id] ?? [];
+                            if (!empty(array_intersect($konflikty_kandydata, $nowa_grupa))) {
+                                $ma_konflikt = true;
+                            }
+                            
+                            if (!$ma_konflikt) {
+                                $nowa_grupa[] = $kandydat_id;
+                            }
+                        }
+                        
+                        // Usuń wszystkich przypisanych studentów z głównej puli
+                        $nieprzypisani = array_diff($nieprzypisani, $nowa_grupa);
+                        
+                        // Zapisz grupę do tablicy
+                        $wygenerowane_grupy_w_bloku[] = $nowa_grupa;
+                    }
+
+                    // Zapisz wygenerowane grupy do bazy danych
+                    foreach($wygenerowane_grupy_w_bloku as $grupa_studentow) {
+                        $nazwa_grupy = htmlspecialchars($opis_przedmiotow) . " - Grupa Robocza #" . $nr_grupy;
+                        $stmt_grupa->bind_param("sis", $nazwa_grupy, $wybor_id, $opis_przedmiotow);
+                        $stmt_grupa->execute();
+                        $grupa_id = $conn->insert_id;
+
+                        foreach($grupa_studentow as $numer_albumu) {
+                            $stmt_czlonek->bind_param("ii", $grupa_id, $numer_albumu);
+                            $stmt_czlonek->execute();
+                        }
+                        $nr_grupy++;
+                    }
+                }
+
+                redirect_with_message("generator_grup&wybor_id={$wybor_id}", 'success', 'Grupy robocze zostały wygenerowane z uwzględnieniem preferencji.');
+                break;
+   
             case 'dodaj_ocene_czastkowa':
                 $zajecia_id = (int)$_POST['zajecia_id'];
                 $zapis_id = (int)$_POST['zapis_id'];
@@ -450,52 +570,42 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 
                 redirect_with_message('dashboard', 'success', 'Nowa grupa została utworzona, a studenci zapisani na zajęcia.');
                 break;
+
+            // W pliku handler.php wewnątrz switch($action)
+
             case 'modyfikuj_termin':
                 $termin_id = (int)$_POST['termin_id'];
+                $prowadzacy_id = (int)$_POST['prowadzacy_id'];
+                $sala_id = (int)$_POST['sala_id'];
                 $status = $_POST['status'];
-                $nowy_prowadzacy_id = !empty($_POST['prowadzacy_id']) ? (int)$_POST['prowadzacy_id'] : null;
-                $nowa_sala_id = !empty($_POST['sala_id']) ? (int)$_POST['sala_id'] : null;
                 $notatki = $_POST['notatki'];
+                $data_zajec = $_POST['data_zajec'];
+                $godzina_rozpoczecia = $_POST['godzina_rozpoczecia'];
+                $godzina_zakonczenia = $_POST['godzina_zakonczenia'];
 
-                // Budujemy dynamicznie zapytanie UPDATE, aby zmieniać tylko te pola, które zostały podane
-                $sql_parts = [];
-                $params = [];
-                $types = "";
-
-                // Zawsze aktualizujemy status i notatki
-                $sql_parts[] = "status = ?";
-                $params[] = $status;
-                $types .= "s";
-
-                $sql_parts[] = "notatki = ?";
-                $params[] = $notatki;
-                $types .= "s";
-
-                // Jeśli podano nowego prowadzącego, dodajemy go do zapytania
-                if ($nowy_prowadzacy_id) {
-                    $sql_parts[] = "prowadzacy_id = ?";
-                    $params[] = $nowy_prowadzacy_id;
-                    $types .= "i";
-                }
-
-                // Jeśli podano nową salę, dodajemy ją do zapytania
-                if ($nowa_sala_id) {
-                    $sql_parts[] = "sala_id = ?";
-                    $params[] = $nowa_sala_id;
-                    $types .= "i";
-                }
-
-                // Dodajemy ID terminu na końcu listy parametrów
-                $params[] = $termin_id;
-                $types .= "i";
-
-                $sql = "UPDATE TerminyZajec SET " . implode(', ', $sql_parts) . " WHERE termin_id = ?";
-                
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param($types, ...$params);
+                $stmt = $conn->prepare("
+                    UPDATE TerminyZajec 
+                    SET prowadzacy_id = ?, sala_id = ?, status = ?, notatki = ?, data_zajec = ?, godzina_rozpoczecia = ?, godzina_zakonczenia = ?
+                    WHERE termin_id = ?
+                ");
+                $stmt->bind_param("iisssssi", $prowadzacy_id, $sala_id, $status, $notatki, $data_zajec, $godzina_rozpoczecia, $godzina_zakonczenia, $termin_id);
                 $stmt->execute();
                 
-                redirect_with_message('dashboard', 'success', 'Termin zajęć został pomyślnie zaktualizowany.');
+                // ZMIANA: Nowa logika przekierowania
+                if (isset($_POST['return_to']) && !empty($_POST['return_to'])) {
+                    $return_url = urldecode($_POST['return_to']);
+                    // Usuwamy stary status i message, jeśli istnieją, aby się nie dublowały
+                    $return_url = preg_replace('/(&?status=.*)(&?message=.*)/', '', $return_url);
+                    $return_url = preg_replace('/&?status=[^&]*/', '', $return_url);
+                    $return_url = preg_replace('/&?message=[^&]*/', '', $return_url);
+                    
+                    $separator = strpos($return_url, '?') === false ? '?' : '&';
+                    header("Location: " . $return_url . $separator . "status=success&message=" . urlencode('Termin zajęć został zaktualizowany.'));
+                    exit();
+                } else {
+                    // Domyślne przekierowanie, jeśli adres powrotny nie został przekazany
+                    redirect_with_message('plan_modyfikuj_termin', 'success', 'Termin zajęć został zaktualizowany.');
+                }
                 break;
 
             case 'stworz_wybory':

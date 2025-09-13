@@ -1,8 +1,6 @@
 <?php
-// Plik: views/plan_wyszukiwarka.php (Wersja 7-dniowa)
+// Plik: views/plan_wyszukiwarka.php (Wersja z przekazywaniem adresu powrotnego)
 
-// --- Logika PHP ---
-// Cała logika PHP na górze pliku do pobierania danych pozostaje bez zmian.
 $filtry = [
     'student' => $_GET['student'] ?? '',
     'prowadzacy' => $_GET['prowadzacy'] ?? '',
@@ -13,11 +11,6 @@ $filtry = [
 $tydzien_offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
 $terminy_do_wyswietlenia = [];
 $czy_filtrowac = !empty(array_filter($filtry));
-
-function generateColor($seed) {
-    $hash = crc32($seed); $r = ($hash & 0xFF0000) >> 16; $g = ($hash & 0x00FF00) >> 8; $b = $hash & 0x0000FF;
-    return "rgba(" . ($r | 128) . ", " . ($g | 128) . ", " . ($b | 128) . ", 0.9)";
-}
 
 $dzisiaj = new DateTime();
 if ($tydzien_offset != 0) {
@@ -35,7 +28,7 @@ if ($czy_filtrowac) {
     $typy_bind = "";
     $sql = "
         SELECT 
-            t.data_zajec, t.godzina_rozpoczecia, t.godzina_zakonczenia, t.status, t.notatki,
+            t.termin_id, t.data_zajec, t.godzina_rozpoczecia, t.godzina_zakonczenia, t.status, t.notatki,
             p.nazwa_przedmiotu, z.forma_zajec, s.budynek, s.numer_sali,
             CONCAT(pr.tytul_naukowy, ' ', pr.imie, ' ', pr.nazwisko) as prowadzacy,
             g.nazwa_grupy
@@ -68,13 +61,13 @@ if ($czy_filtrowac) {
 ?>
 
 <style>
-    /* ZMIANA 1: Siatka ma teraz 7 kolumn na dni tygodnia */
-    .schedule-container { display: grid; grid-template-columns: 60px repeat(7, 1fr); grid-template-rows: auto; border: 1px solid #ccc; background-color: white; }
+    .schedule-container { display: grid; grid-template-columns: 60px repeat(7, 1fr); border: 1px solid #ccc; background-color: white; }
     .schedule-header { padding: 10px; text-align: center; font-weight: bold; border-bottom: 1px solid #ccc; border-right: 1px solid #ccc; background-color: #f8f9fa; }
     .schedule-day-grid { display: grid; grid-template-rows: repeat(48, 20px); position: relative; border-right: 1px solid #ccc; }
     .schedule-times { border-right: 1px solid #ccc; }
     .schedule-times div { height: 80px; border-bottom: 1px dashed #eee; display: flex; align-items: center; justify-content: center; font-size: 12px; box-sizing: border-box;}
-    .schedule-event { position: absolute; width: 90%; left: 2.5%; border-radius: 5px; padding: 5px; font-size: 11px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); color: white; border: 1px solid rgba(0,0,0,0.2); }
+    .schedule-event { position: absolute; width: 90%; left: 5%; border-radius: 5px; padding: 5px; font-size: 11px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); color: white; border: 1px solid rgba(0,0,0,0.2); text-decoration: none; }
+    .schedule-event:hover { opacity: 0.8; }
     .event-title { font-weight: bold; }
     .event-details { font-size: 10px; }
     .event-cancelled { text-decoration: line-through; }
@@ -103,13 +96,7 @@ if ($czy_filtrowac) {
 
     <div class="schedule-container">
         <div class="schedule-header">Godz.</div>
-        <div class="schedule-header">Poniedziałek</div>
-        <div class="schedule-header">Wtorek</div>
-        <div class="schedule-header">Środa</div>
-        <div class="schedule-header">Czwartek</div>
-        <div class="schedule-header">Piątek</div>
-        <div class="schedule-header">Sobota</div>
-        <div class="schedule-header">Niedziela</div>
+        <div class="schedule-header">Poniedziałek</div><div class="schedule-header">Wtorek</div><div class="schedule-header">Środa</div><div class="schedule-header">Czwartek</div><div class="schedule-header">Piątek</div><div class="schedule-header">Sobota</div><div class="schedule-header">Niedziela</div>
 
         <div class="schedule-times">
             <?php for ($h = 8; $h < 20; $h++): ?>
@@ -131,27 +118,22 @@ if ($czy_filtrowac) {
                         $top_position = ($start_minutes_from_8am / 15) * 20;
                         $height = ($duration_minutes / 15) * 20;
                         
-                        $kolor_tla = '#85929E'; 
-                        $extra_class = '';
-                        $mapa_kolorow = [
-                            'Wykład' => '#247C84', 'Lektorat' => '#C44F00', 'Laboratorium' => '#1A8238',
-                            'Audytoryjne' => '#007BB0', 'Projekt' => '#8E44AD', 'Seminarium' => '#D35400'
-                        ];
-                        if (array_key_exists($termin['forma_zajec'], $mapa_kolorow)) {
-                            $kolor_tla = $mapa_kolorow[$termin['forma_zajec']];
-                        }
-                        if (stripos($termin['nazwa_przedmiotu'], 'rektorskie') !== false) {
-                            $kolor_tla = '#3788D8';
-                        }
-                        if ($termin['status'] == 'odwolane') {
-                            $kolor_tla = '#494949';
-                            $extra_class = 'event-cancelled';
-                        }
-                        if ($termin['status'] == 'zastepstwo') {
-                            $kolor_tla = '#006FDD';
-                        }
+                        $kolor_tla = '#85929E'; $extra_class = '';
+                        $mapa_kolorow = ['Wykład' => '#247C84', 'Lektorat' => '#C44F00', 'Laboratorium' => '#1A8238', 'Audytoryjne' => '#007BB0', 'Projekt' => '#8E44AD', 'Seminarium' => '#D35400'];
+                        if (array_key_exists($termin['forma_zajec'], $mapa_kolorow)) { $kolor_tla = $mapa_kolorow[$termin['forma_zajec']]; }
+                        if (stripos($termin['nazwa_przedmiotu'], 'rektorskie') !== false) { $kolor_tla = '#3788D8'; }
+                        if ($termin['status'] == 'odwolane') { $kolor_tla = '#494949'; $extra_class = 'event-cancelled'; }
+                        if ($termin['status'] == 'zastepstwo') { $kolor_tla = '#006FDD'; }
+                        
+                        $tag = $is_admin ? 'a' : 'div';
+                        // ZMIANA: Dodajemy adres powrotny do linku edycji
+                        $return_url = urlencode("index.php?" . $_SERVER['QUERY_STRING']);
+                        $link_edycji = $is_admin ? 'href="index.php?page=plan_modyfikuj_termin&termin_id=' . $termin['termin_id'] . '&return_to=' . $return_url . '"' : '';
                     ?>
-                    <div class="schedule-event <?= $extra_class ?>" style="top: <?= $top_position ?>px; height: <?= $height ?>px; background-color: <?= $kolor_tla ?>;">
+                    <<?= $tag ?> <?= $link_edycji ?> class="schedule-event <?= $extra_class ?>" style="top: <?= $top_position ?>px; height: <?= $height ?>px; background-color: <?= $kolor_tla ?>;">
+                        <div class="event-time" style="font-weight: bold; margin-bottom: 3px; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 2px;">
+                            <?= substr($termin['godzina_rozpoczecia'], 0, 5) ?> - <?= substr($termin['godzina_zakonczenia'], 0, 5) ?>
+                        </div>
                         <div class="event-title"><?= htmlspecialchars($termin['nazwa_przedmiotu']) ?></div>
                         <div class="event-details">
                             <?= htmlspecialchars($termin['forma_zajec']) ?> (<?= htmlspecialchars($termin['nazwa_grupy']) ?>)<br>
@@ -161,7 +143,7 @@ if ($czy_filtrowac) {
                                 <em><?= htmlspecialchars($termin['notatki']) ?></em>
                             <?php endif; ?>
                         </div>
-                    </div>
+                    </<?= $tag ?>>
                 <?php endforeach; ?>
             </div>
         <?php endfor; ?>

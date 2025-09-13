@@ -71,6 +71,9 @@ $ma_dostep = $is_admin ? true : in_array($page, $dozwolone_strony);
                             <li><a href="index.php?page=zapisy_masowe_krok1" class="<?= str_starts_with($currentPage, 'zapisy_masowe') ? 'active' : '' ?>">Zapisy na Zajęcia</a></li>
                             <li><a href="index.php?page=student_zapisy_form" class="<?= str_starts_with($currentPage, 'student_zapisy_form') ? 'active' : '' ?>">Pogląd zajęć studenta</a></li>
                             <li><a href="index.php?page=dydaktyka_przeglad" class="<?= str_starts_with($currentPage, 'dydaktyka_przeglad') ? 'active' : '' ?>">▶ Przegląd Dydaktyki</a></li>
+                            <li><a href="index.php?page=generator_grup" class="<?= str_starts_with($currentPage, 'generator_grup') ? 'active' : '' ?>">▶ Generator Grup</a></li>
+                            <li><a href="index.php?page=preferencje_studenta_form" class="<?= str_starts_with($currentPage, 'preferencje_studenta_form') ? 'active' : '' ?>">▶ Preferencje</a></li>
+
                             <hr>
                             <li><strong>Wnioski i Ankiety</strong></li>
                             <li><a href="index.php?page=wybory_admin_form" class="<?= str_starts_with($currentPage, 'wybory_admin_form') ? 'active' : '' ?>">Utwórz Wybór Przedmiotów</a></li>
